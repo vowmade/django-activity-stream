@@ -1,23 +1,23 @@
 import json
 
-from django.shortcuts import get_object_or_404
-from django.core.exceptions import ObjectDoesNotExist
-from django.utils.feedgenerator import Atom1Feed, rfc3339_date
+from actstream.models import Action, any_stream, model_stream, user_stream
 from django.contrib.contenttypes.models import ContentType
-from django.contrib.syndication.views import Feed, add_domain
 from django.contrib.sites.models import Site
-from django.utils.encoding import force_text
-from django.utils.six import text_type
+from django.contrib.sites.shortcuts import get_current_site
+from django.contrib.syndication.views import Feed, add_domain
+from django.core.exceptions import ObjectDoesNotExist
+from django.http import Http404, HttpResponse
+from django.shortcuts import get_object_or_404
 from django.utils import datetime_safe
+from django.utils.encoding import force_text
+from django.utils.feedgenerator import Atom1Feed, rfc3339_date
+from django.utils.six import text_type
 from django.views.generic import View
-from django.http import HttpResponse, Http404
 
 try:
     from django.core.urlresolvers import reverse
 except ImportError:
     from django.urls import reverse
-
-from actstream.models import Action, model_stream, user_stream, any_stream
 
 
 class AbstractActivityStream(object):
@@ -50,7 +50,11 @@ class AbstractActivityStream(object):
         if date is None:
             date = action.timestamp
         date = datetime_safe.new_datetime(date).strftime('%Y-%m-%d')
-        return 'tag:%s,%s:%s' % (Site.objects.get_current().domain, date,
+        if hasattr(self, 'request'):
+            site = get_current_site(self.request)
+        else:
+            site = Site.objects.get_current()
+        return 'tag:%s,%s:%s' % (site.domain, date,
                                  self.get_url(action, obj, False))
 
     def get_url(self, action, obj=None, domain=True):
@@ -66,7 +70,11 @@ class AbstractActivityStream(object):
             ctype = ContentType.objects.get_for_model(obj)
             url = reverse('actstream_actor', None, (ctype.pk, obj.pk))
         if domain:
-            return add_domain(Site.objects.get_current().domain, url)
+            if hasattr(self, 'request'):
+                site = get_current_site(self.request)
+            else:
+                site = Site.objects.get_current()
+            return add_domain(site.domain, url)
         return url
 
     def format(self, action):
@@ -169,6 +177,11 @@ class ActivityStreamsAtomFeed(Atom1Feed):
 
 
 class ActivityStreamsBaseFeed(AbstractActivityStream, Feed):
+
+    def __call__(self, request, *args, **kwargs):
+        """Initialize attributes shared by all view methods."""
+        self.request = request
+        return super(ActivityStreamsBaseFeed, self).__call__(request, *args, **kwargs)
 
     def feed_extra_kwargs(self, obj):
         """
